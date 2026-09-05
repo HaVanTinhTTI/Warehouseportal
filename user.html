@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SharePoint List Manager</title>
+  <style>
+    :root{--blue:#005a9e;--blue2:#0078d4;--bg:#f4f6f8;--border:#d0d7de;--danger:#c62828;--ok:#107c10}
+    *{box-sizing:border-box} body{margin:0;font-family:Segoe UI,Arial,sans-serif;background:var(--bg);color:#1f2937}
+    header{background:linear-gradient(135deg,var(--blue),var(--blue2));color:#fff;padding:18px 24px}
+    header h1{margin:0;font-size:24px} header p{margin:5px 0 0;opacity:.9}
+    main{max-width:1200px;margin:20px auto;padding:0 16px}
+    .card{background:#fff;border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;box-shadow:0 2px 10px rgba(0,0,0,.05)}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.grid-5{grid-template-columns:repeat(5,minmax(0,1fr))}
+    label{display:block;font-size:13px;font-weight:600;margin-bottom:5px} input,select{width:100%;padding:10px;border:1px solid var(--border);border-radius:7px;background:#fff}
+    button{border:0;border-radius:7px;padding:10px 14px;cursor:pointer;font-weight:600}.primary{background:var(--blue2);color:#fff}.secondary{background:#e8f1fb;color:#004578}.danger{background:#fde7e9;color:var(--danger)}
+    .toolbar{display:flex;gap:8px;align-items:end;flex-wrap:wrap}.toolbar .search{flex:1;min-width:230px}.actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+    .status{padding:10px 12px;border-radius:7px;margin-top:12px;display:none}.status.ok{display:block;background:#e7f5e7;color:var(--ok)}.status.error{display:block;background:#fde7e9;color:var(--danger)}.status.info{display:block;background:#e8f1fb;color:#004578}
+    .table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:850px}th,td{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left;font-size:14px}th{background:#f6f8fa;position:sticky;top:0}.empty{text-align:center;color:#6b7280;padding:28px}
+    .pill{padding:3px 8px;border-radius:999px;font-size:12px;background:#e8f1fb;color:#004578}.pill.inactive{background:#eee;color:#555}
+    @media(max-width:800px){.grid,.grid-5{grid-template-columns:1fr}header h1{font-size:20px}}
+  </style>
+</head>
+<body>
+<header><h1>Warehouse Portal - User Management</h1><p>Đọc, thêm, sửa và vô hiệu hóa dữ liệu trên SharePoint List</p></header>
+<main>
+  <section class="card">
+    <h2>Cấu hình kết nối</h2>
+    <div class="grid">
+      <div><label for="siteUrl">SharePoint Site URL</label><input id="siteUrl" value="https://ttigroup.sharepoint.com/sites/ClerkBW2"></div>
+      <div><label for="listTitle">List title</label><input id="listTitle" value="user"></div>
+    </div>
+    <div class="actions"><button class="primary" onclick="connectAndLoad()">Kết nối và tải dữ liệu</button></div>
+    <div id="status" class="status"></div>
+  </section>
+
+  <section class="card">
+    <h2 id="formTitle">Thêm người dùng</h2>
+    <div class="grid grid-5">
+      <div><label>User ID</label><input id="userId" placeholder="001"></div>
+      <div><label>Full name</label><input id="fullName" placeholder="Ha Van Tinh"></div>
+      <div><label>Email</label><input id="email" type="email" placeholder="name@ttigroup.com.vn"></div>
+      <div><label>Role</label><select id="role"><option>Admin</option><option>Leader</option><option selected>User</option></select></div>
+      <div><label>Status</label><select id="userStatus"><option selected>Active</option><option>Inactive</option></select></div>
+    </div>
+    <div class="actions">
+      <button class="primary" onclick="saveUser()">Lưu</button>
+      <button class="secondary" onclick="resetForm()">Làm mới</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="toolbar">
+      <div class="search"><label>Tìm kiếm</label><input id="search" placeholder="Tìm User ID, tên, email, role..." oninput="renderUsers()"></div>
+      <button class="secondary" onclick="loadUsers()">Refresh</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>ID</th><th>User ID</th><th>Full name</th><th>Email</th><th>Role</th><th>Status</th><th>Action</th></tr></thead>
+        <tbody id="userRows"><tr><td colspan="7" class="empty">Chưa tải dữ liệu</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+<script>
+'use strict';
+let users=[];
+let editingItemId=null;
+
+function cfg(){
+  return {siteUrl:document.getElementById('siteUrl').value.trim().replace(/\/$/,''),listTitle:document.getElementById('listTitle').value.trim()};
+}
+function escOData(v){return String(v).replace(/'/g,"''");}
+function showStatus(message,type='info'){const el=document.getElementById('status');el.textContent=message;el.className='status '+type;}
+function saveConfig(){localStorage.setItem('spUserManagerConfig',JSON.stringify(cfg()));}
+function restoreConfig(){try{const c=JSON.parse(localStorage.getItem('spUserManagerConfig')||'{}');if(c.siteUrl)document.getElementById('siteUrl').value=c.siteUrl;if(c.listTitle)document.getElementById('listTitle').value=c.listTitle;}catch(e){}}
+
+async function spFetch(url,options={}){
+  const response=await fetch(url,{credentials:'include',...options,headers:{Accept:'application/json;odata=nometadata',...(options.headers||{})}});
+  if(!response.ok){throw new Error(`HTTP ${response.status}: ${await response.text()}`);}
+  if(response.status===204)return null;
+  return response.json();
+}
+async function getDigest(){
+  const {siteUrl}=cfg();
+  const data=await spFetch(`${siteUrl}/_api/contextinfo`,{method:'POST',headers:{'Content-Type':'application/json;odata=nometadata'}});
+  return data.FormDigestValue;
+}
+async function connectAndLoad(){
+  const {siteUrl,listTitle}=cfg();
+  if(!siteUrl||!listTitle){showStatus('Vui lòng nhập Site URL và List title.','error');return;}
+  saveConfig(); await loadUsers();
+}
+async function loadUsers(){
+  const {siteUrl,listTitle}=cfg();
+  if(!siteUrl||!listTitle)return showStatus('Thiếu Site URL hoặc List title.','error');
+  try{
+    showStatus('Đang tải dữ liệu...','info');
+    const fields='$select=Id,Title,UserID,FullName,Email,Role,Status';
+    const data=await spFetch(`${siteUrl}/_api/web/lists/GetByTitle('${escOData(listTitle)}')/items?${fields}&$orderby=Id desc&$top=5000`);
+    users=data.value||[]; renderUsers(); showStatus(`Đã tải ${users.length} người dùng.`,'ok');
+  }catch(e){showStatus('Không đọc được SharePoint List. '+friendlyError(e),'error');console.error(e);}
+}
+function renderUsers(){
+  const q=document.getElementById('search').value.trim().toLowerCase();
+  const filtered=users.filter(u=>[u.Title,u.UserID,u.FullName,u.Email,u.Role,u.Status].some(v=>String(v||'').toLowerCase().includes(q)));
+  const body=document.getElementById('userRows');
+  if(!filtered.length){body.innerHTML='<tr><td colspan="7" class="empty">Không có dữ liệu phù hợp</td></tr>';return;}
+  body.innerHTML=filtered.map(u=>`<tr>
+    <td>${html(u.Id)}</td><td>${html(u.UserID)}</td><td>${html(u.FullName)}</td><td>${html(u.Email)}</td><td>${html(u.Role)}</td>
+    <td><span class="pill ${u.Status==='Inactive'?'inactive':''}">${html(u.Status)}</span></td>
+    <td><button class="secondary" onclick="editUser(${u.Id})">Sửa</button> <button class="danger" onclick="disableUser(${u.Id})">Disable</button></td>
+  </tr>`).join('');
+}
+function html(v){return String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
+function formData(){const fullName=document.getElementById('fullName').value.trim();return {Title:fullName,UserID:document.getElementById('userId').value.trim(),FullName:fullName,Email:document.getElementById('email').value.trim(),Role:document.getElementById('role').value,Status:document.getElementById('userStatus').value};}
+function validateUser(u){if(!u.UserID||!u.FullName||!u.Email)return 'User ID, Full name và Email là bắt buộc.';if(!/^\S+@\S+\.\S+$/.test(u.Email))return 'Email không hợp lệ.';const duplicate=users.some(x=>String(x.UserID)===String(u.UserID)&&x.Id!==editingItemId);if(duplicate)return 'User ID đã tồn tại.';return '';}
+async function saveUser(){
+  const u=formData(),error=validateUser(u); if(error)return showStatus(error,'error');
+  try{
+    showStatus('Đang lưu...','info'); const digest=await getDigest(); const {siteUrl,listTitle}=cfg();
+    const base=`${siteUrl}/_api/web/lists/GetByTitle('${escOData(listTitle)}')/items`;
+    if(editingItemId){
+      await spFetch(`${base}(${editingItemId})`,{method:'POST',headers:{'Content-Type':'application/json;odata=nometadata','X-RequestDigest':digest,'IF-MATCH':'*','X-HTTP-Method':'MERGE'},body:JSON.stringify(u)});
+    }else{
+      await spFetch(base,{method:'POST',headers:{'Content-Type':'application/json;odata=nometadata','X-RequestDigest':digest},body:JSON.stringify(u)});
+    }
+    resetForm(); await loadUsers(); showStatus('Đã lưu dữ liệu thành công.','ok');
+  }catch(e){showStatus('Không ghi được SharePoint List. '+friendlyError(e),'error');console.error(e);}
+}
+function editUser(id){
+  const u=users.find(x=>x.Id===id);if(!u)return;
+  editingItemId=id; document.getElementById('formTitle').textContent='Cập nhật người dùng';
+  document.getElementById('userId').value=u.UserID||'';document.getElementById('fullName').value=u.FullName||'';document.getElementById('email').value=u.Email||'';document.getElementById('role').value=u.Role||'User';document.getElementById('userStatus').value=u.Status||'Active';window.scrollTo({top:0,behavior:'smooth'});
+}
+async function disableUser(id){
+  const u=users.find(x=>x.Id===id);if(!u||!confirm(`Chuyển ${u.FullName||u.UserID} sang Inactive?`))return;
+  editingItemId=id;document.getElementById('userId').value=u.UserID||'';document.getElementById('fullName').value=u.FullName||'';document.getElementById('email').value=u.Email||'';document.getElementById('role').value=u.Role||'User';document.getElementById('userStatus').value='Inactive';await saveUser();
+}
+function resetForm(){editingItemId=null;document.getElementById('formTitle').textContent='Thêm người dùng';['userId','fullName','email'].forEach(id=>document.getElementById(id).value='');document.getElementById('role').value='User';document.getElementById('userStatus').value='Active';}
+function friendlyError(e){const m=String(e.message||e);if(location.protocol==='file:')return 'File đang chạy bằng file://. Hãy host ứng dụng trong đúng SharePoint site hoặc dùng SPFx; trình duyệt thường chặn xác thực/CORS khi chạy local.';if(/403/.test(m))return '403: tài khoản không có quyền ghi hoặc request digest không hợp lệ.';if(/404/.test(m))return '404: sai Site URL, List title hoặc internal field name.';return m;}
+restoreConfig();
+</script>
+</body>
+</html>
