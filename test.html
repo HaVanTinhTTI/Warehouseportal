@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test SharePoint</title>
+</head>
+<body>
+
+<h2>Test Read SharePoint List</h2>
+
+<button onclick="loadData()">
+    Load Data
+</button>
+
+<pre id="result"></pre>
+
+<script>
+
+async function loadData(){
+
+    try{
+
+        const url =
+        "https://ttigroup.sharepoint.com/sites/ClerkBW2/_api/web/lists/getbytitle('user')/items";
+
+        const response =
+            await fetch(url,{
+                headers:{
+                    "Accept":"application/json;odata=nometadata"
+                },
+                credentials:"include"
+            });
+
+        const data =
+            await response.json();
+
+        document.getElementById("result")
+            .innerText =
+            JSON.stringify(data,null,2);
+
+    }
+    catch(error){
+
+        console.error(error);
+
+        document.getElementById("result")
+            .innerText =
+            error;
+
+    }
+
+}
+
+</script>
+
+</body>
+</html>
